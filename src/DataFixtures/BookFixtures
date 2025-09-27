@@ -1,0 +1,30 @@
+<?php
+
+namespace App\DataFixtures;
+
+use App\Entity\Book;
+use Doctrine\Bundle\FixturesBundle\Fixture;
+use Doctrine\Persistence\ObjectManager;
+
+class BookFixtures extends Fixture
+{
+    public function load(ObjectManager $om): void
+    {
+        $items = [
+            ['The Pragmatic Programmer', 'Andrew Hunt / David Thomas', 'https://covers.openlibrary.org/b/isbn/020161622X-L.jpg', '1999-10-30'],
+            ['Clean Code', 'Robert C. Martin', 'https://covers.openlibrary.org/b/isbn/9780132350884-L.jpg', '2008-08-11'],
+            ['Design Patterns', 'Gamma/Helm/Johnson/Vlissides', 'https://covers.openlibrary.org/b/isbn/0201633612-L.jpg', '1994-10-21'],
+            ['Refactoring', 'Martin Fowler', 'https://covers.openlibrary.org/b/isbn/0201485672-L.jpg', '1999-07-08'],
+        ];
+
+        foreach ($items as [$title, $author, $url, $date]) {
+            $b = (new Book())
+                ->setTitle($title)
+                ->setAuthor($author)
+                ->setCoverUrl($url)
+                ->setPublishedAt(new \DateTimeImmutable($date));
+            $om->persist($b);
+        }
+        $om->flush();
+    }
+}

@@ -6,7 +6,7 @@ use App\Entity\Book;
 use Doctrine\Bundle\FixturesBundle\Fixture;
 use Doctrine\Persistence\ObjectManager;
 
-class BookFixtures extends Fixture
+class AppFixtures extends Fixture
 {
     public function load(ObjectManager $om): void
     {

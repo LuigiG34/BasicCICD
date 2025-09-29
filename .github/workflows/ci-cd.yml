@@ -1,0 +1,88 @@
+name: CI/CD (Hostinger LiteSpeed)
+
+on:
+  push:
+    branches: [ "master" ]
+  pull_request:
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: mbstring, intl, pdo_sqlite
+          tools: composer:v2
+
+      - name: Install deps (dev)
+        run: composer install --no-interaction --prefer-dist
+
+      - name: Run tests (SQLite)
+        env:
+          APP_ENV: test
+        run: php bin/phpunit
+
+  deploy:
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    needs: ci
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Build prod vendor locally so server doesn't need Composer
+      - name: Setup PHP for build
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: mbstring, intl
+          tools: composer:v2
+
+      - name: Install prod dependencies
+        run: composer install --no-dev --prefer-dist --no-interaction --optimize-autoloader
+
+      - name: Rsync to Hostinger over SSH
+        uses: burnett01/rsync-deployments@7.0.1
+        with:
+          switches: -az --delete \
+            --exclude=".git" --exclude=".github" --exclude="var/cache/*" --exclude="var/log/*" \
+            --exclude=".env" --exclude=".env.test" --exclude=".env.local"
+          path: ./
+          remote_path: ${{ secrets.REMOTE_PATH }}
+          remote_host: ${{ secrets.SSH_HOST }}
+          remote_user: ${{ secrets.SSH_USER }}
+          remote_key: ${{ secrets.SSH_KEY }}
+          remote_port: ${{ secrets.SSH_PORT || 22 }}
+
+      - name: Post-deploy on server (env, cache, schema)
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          port: ${{ secrets.SSH_PORT || 22 }}
+          script: |
+            set -e
+            cd "${{ secrets.REMOTE_PATH }}"
+
+            # Write .env.local with secrets from GitHub (never commit this file)
+            cat > .env.local <<'EOF'
+            APP_ENV=prod
+            APP_DEBUG=0
+            APP_SECRET=${{ secrets.APP_SECRET }}
+            DATABASE_URL="mysql://${{ secrets.DB_USER }}:${{ secrets.DB_PASS }}@${{ secrets.DB_HOST }}:3306/${{ secrets.DB_NAME }}?charset=utf8mb4"
+            EOF
+
+            # Ensure writable var/
+            mkdir -p var && chmod -R 0775 var || true
+
+            # Warm cache
+            php -v || true
+            php bin/console cache:clear --env=prod
+            php bin/console cache:warmup --env=prod
+
+            # Update schema (swap to migrations when ready)
+            php bin/console doctrine:schema:update --force --env=prod

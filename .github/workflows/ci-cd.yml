@@ -24,7 +24,7 @@ jobs:
       - name: Run tests (SQLite)
         env:
           APP_ENV: test
-        run: php bin/phpunit
+        run: ./vendor/bin/phpunit -v
 
   deploy:
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'

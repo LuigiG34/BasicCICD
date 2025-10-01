@@ -2,10 +2,10 @@
 
 namespace App\Tests;
 
+use App\DataFixtures\AppFixtures;
 use Symfony\Bundle\FrameworkBundle\Test\WebTestCase;
 use Doctrine\ORM\EntityManagerInterface;
 use Doctrine\ORM\Tools\SchemaTool;
-use App\DataFixtures\BookFixtures;
 
 class BooksPageTest extends WebTestCase
 {
@@ -17,7 +17,7 @@ class BooksPageTest extends WebTestCase
         $tool->dropDatabase();
         $tool->createSchema($em->getMetadataFactory()->getAllMetadata());
 
-        (new BookFixtures())->load($em);
+        (new AppFixtures())->load($em);
         self::ensureKernelShutdown();
     }
 

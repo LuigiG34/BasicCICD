@@ -18,13 +18,13 @@ jobs:
           extensions: mbstring, intl, pdo_sqlite
           tools: composer:v2
 
-      - name: Install deps (dev)
+      - name: Install dev dependencies
         run: composer install --no-interaction --prefer-dist
 
       - name: Run tests (SQLite)
         env:
           APP_ENV: test
-          SYMFONY_DEPRECATIONS_HELPER: weak 
+          SYMFONY_DEPRECATIONS_HELPER: weak  # avoid failing on deprecations
         run: ./vendor/bin/phpunit -v
 
   deploy:
@@ -34,7 +34,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Build prod vendor locally so server doesn't need Composer
       - name: Setup PHP for build
         uses: shivammathur/setup-php@v2
         with:
@@ -46,17 +45,22 @@ jobs:
         run: composer install --no-dev --prefer-dist --no-interaction --optimize-autoloader
 
       - name: Rsync to Hostinger over SSH
-        uses: burnett01/rsync-deployments@7.0.1
+        uses: burnett01/rsync-deployments@7.1.0
         with:
           switches: -az --delete \
-            --exclude=".git" --exclude=".github" --exclude="var/cache/*" --exclude="var/log/*" \
-            --exclude=".env" --exclude=".env.test" --exclude=".env.local"
+            --exclude=".git" \
+            --exclude=".github" \
+            --exclude="var/cache/*" \
+            --exclude="var/log/*" \
+            --exclude=".env" \
+            --exclude=".env.test" \
+            --exclude=".env.local"
           path: ./
           remote_path: ${{ secrets.REMOTE_PATH }}
           remote_host: ${{ secrets.SSH_HOST }}
           remote_user: ${{ secrets.SSH_USER }}
           remote_key: ${{ secrets.SSH_KEY }}
-          remote_port: ${{ secrets.SSH_PORT || 22 }}
+          remote_port: ${{ secrets.SSH_PORT }}
 
       - name: Post-deploy on server (env, cache, schema)
         uses: appleboy/ssh-action@v1.2.0
@@ -69,8 +73,8 @@ jobs:
             set -e
             cd "${{ secrets.REMOTE_PATH }}"
 
-            # Write .env.local with secrets from GitHub (never commit this file)
-            cat > .env.local <<'EOF'
+            # Write .env.local with secrets from GitHub
+            cat > .env.local <<EOF
             APP_ENV=prod
             APP_DEBUG=0
             APP_SECRET=${{ secrets.APP_SECRET }}
@@ -80,10 +84,10 @@ jobs:
             # Ensure writable var/
             mkdir -p var && chmod -R 0775 var || true
 
-            # Warm cache
+            # Warm Symfony cache
             php -v || true
             php bin/console cache:clear --env=prod
             php bin/console cache:warmup --env=prod
 
-            # Update schema (swap to migrations when ready)
+            # Update DB schema (optional — replace with migrations later)
             php bin/console doctrine:schema:update --force --env=prod

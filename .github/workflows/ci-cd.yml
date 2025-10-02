@@ -27,7 +27,7 @@ jobs:
         run: ./vendor/bin/phpunit -v
 
   deploy:
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    if: github.ref == 'refs/heads/master' && github.event_name == 'push'
     needs: ci
     runs-on: ubuntu-latest
     steps:
@@ -63,7 +63,7 @@ jobs:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_KEY }}
-          port: ${{ secrets.SSH_PORT || 22 }}
+          port: ${{ secrets.SSH_PORT }}
           script: |
             set -e
             cd "${{ secrets.REMOTE_PATH }}"

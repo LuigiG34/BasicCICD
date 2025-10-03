@@ -1,2 +1,14 @@
-RewriteCond %{REQUEST_URI} !^/public/
-RewriteRule ^(.*)$ /public/$1 [L]
+# /.htaccess (project root)
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+
+    # Let ACME challenges pass (Let's Encrypt)
+    RewriteRule ^\.well-known/ - [L]
+
+    # Avoid redirect loop if already under /public
+    RewriteRule ^public/ - [L]
+
+    # Redirect everything else to /public/, preserving the path
+    # Use R=302 to test; switch to 301 once you're sure.
+    RewriteRule ^(.*)$ /public/$1 [L,R=302]
+</IfModule>

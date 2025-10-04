@@ -84,7 +84,7 @@ jobs:
             set -eux
             cd "${{ secrets.REMOTE_PATH }}"
 
-            # Write .env.local safely (no shell expansion)
+            # Write .env.local safely
             cat > .env.local <<'EOF'
             APP_ENV=prod
             APP_DEBUG=0
@@ -95,14 +95,11 @@ jobs:
             php -v
             php -m | sort
 
-            # Create a small PHP file to test PDO (shows the real error)
+            # File-based PDO test (prints the real error)
             cat > /tmp/pdo_test.php <<'PHP'
             <?php
             error_reporting(E_ALL); ini_set('display_errors', 1);
-            $host = getenv('DB_HOST_ENV');
-            $db   = getenv('DB_NAME_ENV');
-            $user = getenv('DB_USER_ENV');
-            $pass = getenv('DB_PASS_ENV');
+            $host = getenv('DB_HOST'); $db = getenv('DB_NAME'); $user = getenv('DB_USER'); $pass = getenv('DB_PASS');
             $dsn  = "mysql:host=$host;dbname=$db;charset=utf8mb4";
             echo "Testing DSN=$dsn user=$user\n";
             try {
@@ -114,23 +111,16 @@ jobs:
             }
             PHP
 
-            DB_HOST_ENV='${{ secrets.DB_HOST }}' \
-            DB_NAME_ENV='${{ secrets.DB_NAME }}' \
-            DB_USER_ENV='${{ secrets.DB_USER }}' \
-            DB_PASS_ENV='${{ secrets.DB_PASS }}' \
-            php /tmp/pdo_test.php
+            set +e
+            DB_HOST='${{ secrets.DB_HOST }}' DB_NAME='${{ secrets.DB_NAME }}' DB_USER='${{ secrets.DB_USER }}' DB_PASS='${{ secrets.DB_PASS }}' \
+              php -d display_errors=1 /tmp/pdo_test.php > /tmp/pdo.out 2>&1
+            rc=$?
+            set -e
+            echo "---- PDO OUTPUT ----"; cat /tmp/pdo.out || true; echo "RC=$rc"
+            [ $rc -eq 0 ]
 
             test -f bin/console || { echo "❌ bin/console missing"; exit 1; }
-
-            # If PDO OK, run Symfony
-            APP_DEBUG=1 php -d display_errors=1 bin/console about --env=prod -vvv || {
-              echo "---- var/log/prod.log ----"
-              [ -f var/log/prod.log ] && tail -n 200 var/log/prod.log || echo "no prod.log yet"
-              exit 1
-            }
-
+            APP_DEBUG=1 php -d display_errors=1 bin/console about --env=prod -vvv
             php bin/console cache:clear --env=prod -vvv
             php bin/console cache:warmup --env=prod -vvv
             php bin/console doctrine:schema:update --force --env=prod -vvv
-
-

@@ -72,34 +72,42 @@ jobs:
             -e "ssh -i ~/.ssh/id_ed25519 -p ${SSH_PORT:-22}" \
             ./ "${SSH_USER}@${SSH_HOST}:${REMOTE_PATH}"
 
-      - name: Post-deploy on server (DB debug)
+      - name: Post-deploy on server
         uses: appleboy/ssh-action@v1.2.0
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_KEY }}
           port: ${{ secrets.SSH_PORT }}
-          script_stop: false    # don't abort on failure, we want the message
-          debug: true
+          script_stop: false
           script: |
             set -eu
             cd "${{ secrets.REMOTE_PATH }}"
-            printf 'PWD=%q\n' "$(pwd)"
 
-            # make a tiny PHP to test PDO and always print the error
-            cat > /tmp/pdo_test.php <<'PHP'
-            <?php
-            error_reporting(E_ALL); ini_set('display_errors', 1);
-            $host = $_ENV['H']; $db = $_ENV['D']; $user = $_ENV['U']; $pass = $_ENV['P'];
-            $dsn = "mysql:host=$host;dbname=$db;charset=utf8mb4";
-            echo "Testing DSN=$dsn user=$user\n";
+            cat > .env.local <<'EOF'
+            APP_ENV=prod
+            APP_DEBUG=0
+            APP_SECRET=${{ secrets.APP_SECRET }}
+            DATABASE_URL="mysql://${{ secrets.DB_USER }}:${{ secrets.DB_PASS }}@${{ secrets.DB_HOST }}:3306/${{ secrets.DB_NAME }}?charset=utf8mb4"
+            EOF
+
+            echo "Testing database connection..."
+            php -r "
+            \$host = '${{ secrets.DB_HOST }}';
+            \$db = '${{ secrets.DB_NAME }}';
+            \$user = '${{ secrets.DB_USER }}';
+            \$pass = '${{ secrets.DB_PASS }}';
+            \$dsn = \"mysql:host=\$host;dbname=\$db;charset=utf8mb4\";
+            echo \"DSN: \$dsn\nUser: \$user\n\";
             try {
-              new PDO($dsn, $user, $pass, [PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION]);
-              echo "PDO OK\n"; exit(0);
-            } catch (Throwable $e) {
-              echo "PDO FAIL: ".$e->getMessage()."\n"; exit(2);
+              new PDO(\$dsn, \$user, \$pass, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
+              echo \"PDO connection OK\n\";
+            } catch (Throwable \$e) {
+              echo \"PDO FAILED: \" . \$e->getMessage() . \"\n\";
+              exit(2);
             }
-            PHP
+            " || echo "Connection test failed, continuing anyway..."
 
-            H='${{ secrets.DB_HOST }}' D='${{ secrets.DB_NAME }}' U='${{ secrets.DB_USER }}' P='${{ secrets.DB_PASS }}' \
-            php -d display_errors=1 /tmp/pdo_test.php || true
+            php bin/console cache:clear --env=prod
+            php bin/console cache:warmup --env=prod
+            php bin/console doctrine:schema:update --force --env=prod

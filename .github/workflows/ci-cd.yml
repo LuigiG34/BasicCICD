@@ -72,20 +72,19 @@ jobs:
             -e "ssh -i ~/.ssh/id_ed25519 -p ${SSH_PORT:-22}" \
             ./ "${SSH_USER}@${SSH_HOST}:${REMOTE_PATH}"
 
-      - name: Post-deploy on server (deep debug)
+      - name: Post-deploy on server (DB debug)
         uses: appleboy/ssh-action@v1.2.0
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_KEY }}
           port: ${{ secrets.SSH_PORT }}
-          debug: true
           script_stop: true
           script: |
             set -eux
             cd "${{ secrets.REMOTE_PATH }}"
 
-            # Write .env.local (quote the heredoc to avoid shell expansion of any $ or & in secrets)
+            # write env safely
             cat > .env.local <<'EOF'
             APP_ENV=prod
             APP_DEBUG=0
@@ -93,36 +92,21 @@ jobs:
             DATABASE_URL="mysql://${{ secrets.DB_USER }}:${{ secrets.DB_PASS }}@${{ secrets.DB_HOST }}:3306/${{ secrets.DB_NAME }}?charset=utf8mb4"
             EOF
 
-            echo "PHP CLI:"
-            php -v
-            echo "Modules:"
-            php -m | sort
+            echo "PHP CLI:"; php -v
+            echo "PDO quick test:"
+            php -d display_errors=1 -r '
+              $h = getenv("DB_HOST"); $d = getenv("DB_NAME"); $u = getenv("DB_USER"); $p = getenv("DB_PASS");
+              echo "host=$h db=$d user=$u\n";
+              try { new PDO("mysql:host=$h;dbname=$d;charset=utf8mb4", $u, $p); echo "PDO connect OK\n"; }
+              catch (Throwable $e) { echo "PDO FAIL: ".$e->getMessage()."\n"; }
+            ' DB_HOST='${{ secrets.DB_HOST }}' DB_NAME='${{ secrets.DB_NAME }}' DB_USER='${{ secrets.DB_USER }}' DB_PASS='${{ secrets.DB_PASS }}'
 
-            # Raw PDO connectivity test (no Doctrine involved)
-            cat > /tmp/pdo_test.php <<'PHP'
-            <?php
-            $dsn  = "mysql:host=" . getenv('DB_HOST') . ";dbname=" . getenv('DB_NAME') . ";charset=utf8mb4";
-            try {
-              new PDO($dsn, getenv('DB_USER'), getenv('DB_PASS'));
-              echo "PDO connect OK\n";
-            } catch (Throwable $e) {
-              echo "PDO FAIL: " . $e->getMessage() . "\n";
-              exit(1);
-            }
-            PHP
-            DB_HOST='${{ secrets.DB_HOST }}' DB_NAME='${{ secrets.DB_NAME }}' DB_USER='${{ secrets.DB_USER }}' DB_PASS='${{ secrets.DB_PASS }}' php /tmp/pdo_test.php
-
-            # Symfony checks
             test -f bin/console || { echo "❌ bin/console missing"; exit 1; }
 
-            # Try to show the real exception
             APP_DEBUG=1 php -d display_errors=1 bin/console about --env=prod -vvv || {
               echo "---- var/log/prod.log ----"
               [ -f var/log/prod.log ] && tail -n 200 var/log/prod.log || echo "no prod.log yet"
               exit 1
             }
 
-            php bin/console cache:clear --env=prod -vvv
-            php bin/console cache:warmup --env=prod -vvv
-            php bin/console doctrine:schema:update --force --env=prod -vvv
 

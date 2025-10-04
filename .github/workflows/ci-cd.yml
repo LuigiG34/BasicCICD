@@ -95,29 +95,47 @@ jobs:
             php -v
             php -m | sort
 
-            # File-based PDO test (prints the real error)
+            # File-based PDO test with immediate output
             cat > /tmp/pdo_test.php <<'PHP'
             <?php
             error_reporting(E_ALL); ini_set('display_errors', 1);
             $host = getenv('DB_HOST'); $db = getenv('DB_NAME'); $user = getenv('DB_USER'); $pass = getenv('DB_PASS');
-            $dsn  = "mysql:host=$host;dbname=$db;charset=utf8mb4";
-            echo "Testing DSN=$dsn user=$user\n";
+            
+            echo "=== PDO CONNECTION TEST ===\n";
+            echo "Host: $host\n";
+            echo "Database: $db\n";
+            echo "User: $user\n";
+            echo "Password length: " . strlen($pass) . "\n";
+            
+            $dsn = "mysql:host=$host;dbname=$db;charset=utf8mb4";
+            echo "DSN: $dsn\n\n";
+            
             try {
-              new PDO($dsn, $user, $pass, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
-              echo "PDO connect OK\n";
-            } catch (Throwable $e) {
-              echo "PDO FAIL: ".$e->getMessage()."\n";
+              $pdo = new PDO($dsn, $user, $pass, [
+                PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+                PDO::ATTR_TIMEOUT => 5
+              ]);
+              echo "✅ PDO connection successful!\n";
+              $version = $pdo->query('SELECT VERSION()')->fetchColumn();
+              echo "MySQL version: $version\n";
+              exit(0);
+            } catch (PDOException $e) {
+              echo "❌ PDO FAILED: " . $e->getMessage() . "\n";
+              echo "Error code: " . $e->getCode() . "\n";
               exit(2);
+            } catch (Throwable $e) {
+              echo "❌ UNEXPECTED ERROR: " . $e->getMessage() . "\n";
+              exit(3);
             }
             PHP
 
-            set +e
-            DB_HOST='${{ secrets.DB_HOST }}' DB_NAME='${{ secrets.DB_NAME }}' DB_USER='${{ secrets.DB_USER }}' DB_PASS='${{ secrets.DB_PASS }}' \
-              php -d display_errors=1 /tmp/pdo_test.php > /tmp/pdo.out 2>&1
-            rc=$?
-            set -e
-            echo "---- PDO OUTPUT ----"; cat /tmp/pdo.out || true; echo "RC=$rc"
-            [ $rc -eq 0 ]
+            echo "==== Running PDO Test ===="
+            DB_HOST='${{ secrets.DB_HOST }}' \
+            DB_NAME='${{ secrets.DB_NAME }}' \
+            DB_USER='${{ secrets.DB_USER }}' \
+            DB_PASS='${{ secrets.DB_PASS }}' \
+              php /tmp/pdo_test.php
+            echo "==== PDO Test Complete ===="
 
             test -f bin/console || { echo "❌ bin/console missing"; exit 1; }
             APP_DEBUG=1 php -d display_errors=1 bin/console about --env=prod -vvv

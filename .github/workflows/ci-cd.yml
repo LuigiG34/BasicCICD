@@ -72,7 +72,7 @@ jobs:
             -e "ssh -i ~/.ssh/id_ed25519 -p ${SSH_PORT:-22}" \
             ./ "${SSH_USER}@${SSH_HOST}:${REMOTE_PATH}"
 
-      - name: Post-deploy on server (debug)
+      - name: Post-deploy on server (deep debug)
         uses: appleboy/ssh-action@v1.2.0
         with:
           host: ${{ secrets.SSH_HOST }}
@@ -83,32 +83,45 @@ jobs:
           script_stop: true
           script: |
             set -eux
-            cd "${{ secrets.REMOTE_PATH }}" || { echo "❌ Bad REMOTE_PATH"; exit 1; }
-            echo "PWD=$(pwd)"
-            echo "Listing files:"
-            ls -la
+            cd "${{ secrets.REMOTE_PATH }}"
 
-            # Write .env.local
-            cat > .env.local <<EOF
+            # Write .env.local (quote the heredoc to avoid shell expansion of any $ or & in secrets)
+            cat > .env.local <<'EOF'
             APP_ENV=prod
             APP_DEBUG=0
             APP_SECRET=${{ secrets.APP_SECRET }}
             DATABASE_URL="mysql://${{ secrets.DB_USER }}:${{ secrets.DB_PASS }}@${{ secrets.DB_HOST }}:3306/${{ secrets.DB_NAME }}?charset=utf8mb4"
             EOF
 
-            mkdir -p var
-            chmod -R a+rwX var
+            echo "PHP CLI:"
+            php -v
+            echo "Modules:"
+            php -m | sort
 
-            echo "PHP version:"
-            php -v || true
+            # Raw PDO connectivity test (no Doctrine involved)
+            cat > /tmp/pdo_test.php <<'PHP'
+            <?php
+            $dsn  = "mysql:host=" . getenv('DB_HOST') . ";dbname=" . getenv('DB_NAME') . ";charset=utf8mb4";
+            try {
+              new PDO($dsn, getenv('DB_USER'), getenv('DB_PASS'));
+              echo "PDO connect OK\n";
+            } catch (Throwable $e) {
+              echo "PDO FAIL: " . $e->getMessage() . "\n";
+              exit(1);
+            }
+            PHP
+            DB_HOST='${{ secrets.DB_HOST }}' DB_NAME='${{ secrets.DB_NAME }}' DB_USER='${{ secrets.DB_USER }}' DB_PASS='${{ secrets.DB_PASS }}' php /tmp/pdo_test.php
 
-            # Sanity check Symfony is here
-            test -f bin/console || { echo "❌ bin/console missing in $(pwd)"; exit 1; }
+            # Symfony checks
+            test -f bin/console || { echo "❌ bin/console missing"; exit 1; }
 
-            # Show basic app info first
-            php bin/console about --env=prod -vvv
+            # Try to show the real exception
+            APP_DEBUG=1 php -d display_errors=1 bin/console about --env=prod -vvv || {
+              echo "---- var/log/prod.log ----"
+              [ -f var/log/prod.log ] && tail -n 200 var/log/prod.log || echo "no prod.log yet"
+              exit 1
+            }
 
-            # Then cache + schema
             php bin/console cache:clear --env=prod -vvv
             php bin/console cache:warmup --env=prod -vvv
             php bin/console doctrine:schema:update --force --env=prod -vvv

@@ -84,7 +84,7 @@ jobs:
             set -eux
             cd "${{ secrets.REMOTE_PATH }}"
 
-            # write env safely
+            # Write .env.local safely (no shell expansion)
             cat > .env.local <<'EOF'
             APP_ENV=prod
             APP_DEBUG=0
@@ -92,21 +92,45 @@ jobs:
             DATABASE_URL="mysql://${{ secrets.DB_USER }}:${{ secrets.DB_PASS }}@${{ secrets.DB_HOST }}:3306/${{ secrets.DB_NAME }}?charset=utf8mb4"
             EOF
 
-            echo "PHP CLI:"; php -v
-            echo "PDO quick test:"
-            php -d display_errors=1 -r '
-              $h = getenv("DB_HOST"); $d = getenv("DB_NAME"); $u = getenv("DB_USER"); $p = getenv("DB_PASS");
-              echo "host=$h db=$d user=$u\n";
-              try { new PDO("mysql:host=$h;dbname=$d;charset=utf8mb4", $u, $p); echo "PDO connect OK\n"; }
-              catch (Throwable $e) { echo "PDO FAIL: ".$e->getMessage()."\n"; }
-            ' DB_HOST='${{ secrets.DB_HOST }}' DB_NAME='${{ secrets.DB_NAME }}' DB_USER='${{ secrets.DB_USER }}' DB_PASS='${{ secrets.DB_PASS }}'
+            php -v
+            php -m | sort
+
+            # Create a small PHP file to test PDO (shows the real error)
+            cat > /tmp/pdo_test.php <<'PHP'
+            <?php
+            error_reporting(E_ALL); ini_set('display_errors', 1);
+            $host = getenv('DB_HOST_ENV');
+            $db   = getenv('DB_NAME_ENV');
+            $user = getenv('DB_USER_ENV');
+            $pass = getenv('DB_PASS_ENV');
+            $dsn  = "mysql:host=$host;dbname=$db;charset=utf8mb4";
+            echo "Testing DSN=$dsn user=$user\n";
+            try {
+              new PDO($dsn, $user, $pass, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
+              echo "PDO connect OK\n";
+            } catch (Throwable $e) {
+              echo "PDO FAIL: ".$e->getMessage()."\n";
+              exit(2);
+            }
+            PHP
+
+            DB_HOST_ENV='${{ secrets.DB_HOST }}' \
+            DB_NAME_ENV='${{ secrets.DB_NAME }}' \
+            DB_USER_ENV='${{ secrets.DB_USER }}' \
+            DB_PASS_ENV='${{ secrets.DB_PASS }}' \
+            php /tmp/pdo_test.php
 
             test -f bin/console || { echo "❌ bin/console missing"; exit 1; }
 
+            # If PDO OK, run Symfony
             APP_DEBUG=1 php -d display_errors=1 bin/console about --env=prod -vvv || {
               echo "---- var/log/prod.log ----"
               [ -f var/log/prod.log ] && tail -n 200 var/log/prod.log || echo "no prod.log yet"
               exit 1
             }
+
+            php bin/console cache:clear --env=prod -vvv
+            php bin/console cache:warmup --env=prod -vvv
+            php bin/console doctrine:schema:update --force --env=prod -vvv
 
 

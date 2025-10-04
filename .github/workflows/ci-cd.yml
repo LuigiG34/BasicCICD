@@ -79,66 +79,27 @@ jobs:
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_KEY }}
           port: ${{ secrets.SSH_PORT }}
-          script_stop: true
+          script_stop: false    # don't abort on failure, we want the message
+          debug: true
           script: |
-            set -eux
+            set -eu
             cd "${{ secrets.REMOTE_PATH }}"
+            printf 'PWD=%q\n' "$(pwd)"
 
-            # Write .env.local safely
-            cat > .env.local <<'EOF'
-            APP_ENV=prod
-            APP_DEBUG=0
-            APP_SECRET=${{ secrets.APP_SECRET }}
-            DATABASE_URL="mysql://${{ secrets.DB_USER }}:${{ secrets.DB_PASS }}@${{ secrets.DB_HOST }}:3306/${{ secrets.DB_NAME }}?charset=utf8mb4"
-            EOF
-
-            php -v
-            php -m | sort
-
-            # File-based PDO test with immediate output
+            # make a tiny PHP to test PDO and always print the error
             cat > /tmp/pdo_test.php <<'PHP'
             <?php
             error_reporting(E_ALL); ini_set('display_errors', 1);
-            $host = getenv('DB_HOST'); $db = getenv('DB_NAME'); $user = getenv('DB_USER'); $pass = getenv('DB_PASS');
-            
-            echo "=== PDO CONNECTION TEST ===\n";
-            echo "Host: $host\n";
-            echo "Database: $db\n";
-            echo "User: $user\n";
-            echo "Password length: " . strlen($pass) . "\n";
-            
+            $host = $_ENV['H']; $db = $_ENV['D']; $user = $_ENV['U']; $pass = $_ENV['P'];
             $dsn = "mysql:host=$host;dbname=$db;charset=utf8mb4";
-            echo "DSN: $dsn\n\n";
-            
+            echo "Testing DSN=$dsn user=$user\n";
             try {
-              $pdo = new PDO($dsn, $user, $pass, [
-                PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
-                PDO::ATTR_TIMEOUT => 5
-              ]);
-              echo "✅ PDO connection successful!\n";
-              $version = $pdo->query('SELECT VERSION()')->fetchColumn();
-              echo "MySQL version: $version\n";
-              exit(0);
-            } catch (PDOException $e) {
-              echo "❌ PDO FAILED: " . $e->getMessage() . "\n";
-              echo "Error code: " . $e->getCode() . "\n";
-              exit(2);
+              new PDO($dsn, $user, $pass, [PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION]);
+              echo "PDO OK\n"; exit(0);
             } catch (Throwable $e) {
-              echo "❌ UNEXPECTED ERROR: " . $e->getMessage() . "\n";
-              exit(3);
+              echo "PDO FAIL: ".$e->getMessage()."\n"; exit(2);
             }
             PHP
 
-            echo "==== Running PDO Test ===="
-            DB_HOST='${{ secrets.DB_HOST }}' \
-            DB_NAME='${{ secrets.DB_NAME }}' \
-            DB_USER='${{ secrets.DB_USER }}' \
-            DB_PASS='${{ secrets.DB_PASS }}' \
-              php /tmp/pdo_test.php
-            echo "==== PDO Test Complete ===="
-
-            test -f bin/console || { echo "❌ bin/console missing"; exit 1; }
-            APP_DEBUG=1 php -d display_errors=1 bin/console about --env=prod -vvv
-            php bin/console cache:clear --env=prod -vvv
-            php bin/console cache:warmup --env=prod -vvv
-            php bin/console doctrine:schema:update --force --env=prod -vvv
+            H='${{ secrets.DB_HOST }}' D='${{ secrets.DB_NAME }}' U='${{ secrets.DB_USER }}' P='${{ secrets.DB_PASS }}' \
+            php -d display_errors=1 /tmp/pdo_test.php || true
